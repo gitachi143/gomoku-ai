@@ -8,4 +8,4 @@ src/scripts/
 LICENSE
 pyproject.toml
 pytest.ini
-requirements.txt
+/requirements.txt
