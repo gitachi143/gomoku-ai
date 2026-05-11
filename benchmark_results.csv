@@ -1,0 +1,11 @@
+agent_a,agent_b,games,a_wins,b_wins,draws
+alphabeta,greedy,20,20,0,0
+alphabeta,random,20,20,0,0
+alphabeta,rl,20,10,10,0
+alphabeta,sarsa,20,20,0,0
+greedy,random,100,100,0,0
+greedy,rl,100,0,100,0
+greedy,sarsa,100,0,100,0
+random,rl,100,0,100,0
+random,sarsa,100,0,100,0
+rl,sarsa,100,50,50,0

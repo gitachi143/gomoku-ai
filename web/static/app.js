@@ -3,6 +3,7 @@ const EMPTY = " ";
 const BLACK = "X";
 const WHITE = "O";
 
+// existing DOM refs
 const sideSelect = document.getElementById("sideSelect");
 const newBtn = document.getElementById("newBtn");
 const startBoardBtn = document.getElementById("startBoardBtn");
@@ -13,6 +14,18 @@ const intersectionsEl = document.getElementById("intersections");
 const coordColsEl = document.getElementById("coordCols");
 const coordRowsEl = document.getElementById("coordRows");
 
+// new DOM refs for agent selection and game mode
+const modeSelect = document.getElementById("modeSelect");
+const agentSelect = document.getElementById("agentSelect");
+const blackAgentSelect = document.getElementById("blackAgentSelect");
+const whiteAgentSelect = document.getElementById("whiteAgentSelect");
+const sideField = document.getElementById("sideField");
+const agentField = document.getElementById("agentField");
+const blackAgentField = document.getElementById("blackAgentField");
+const whiteAgentField = document.getElementById("whiteAgentField");
+const stopBtn = document.getElementById("stopBtn");
+
+// game state
 let grid = [];
 let toMove = BLACK;
 let gameOver = false;
@@ -21,6 +34,11 @@ let isDraw = false;
 let lastMove = null;
 /** @type {Set<string> | null} */
 let winningCells = null;
+
+// mode state
+let currentMode = "human_vs_ai";
+let aiLoopRunning = false;
+let aiLoopAbort = false;
 
 function emptyGrid() {
   const g = [];
@@ -188,7 +206,12 @@ function renderBoard() {
         btn.classList.add("is-winning");
       }
 
-      const canClick = !gameOver && toMove === humanSideStone() && v === EMPTY;
+      // disable clicks in ai-vs-ai mode or when it's not human's turn
+      const canClick =
+        currentMode === "human_vs_ai" &&
+        !gameOver &&
+        toMove === humanSideStone() &&
+        v === EMPTY;
       btn.disabled = !canClick;
 
       btn.appendChild(preview);
@@ -226,9 +249,22 @@ function updateStatusLine() {
     else setStatus("Game over.");
     return;
   }
+
   const side = toMove === BLACK ? "Black" : "White";
+
+  // ai-vs-ai status
+  if (currentMode === "ai_vs_ai") {
+    if (aiLoopRunning) {
+      setStatus(`${side} thinking...`);
+    } else {
+      setStatus(`AI vs AI paused. ${side} to move.`);
+    }
+    return;
+  }
+
+  // human-vs-ai status
   const yours = toMove === humanSideStone();
-  setStatus(yours ? `Your turn (${side}).` : `AI thinking (${side} to move)…`);
+  setStatus(yours ? `Your turn (${side}).` : `AI thinking (${side} to move)...`);
 }
 
 function applyServerState(data, opts = {}) {
@@ -247,15 +283,69 @@ function applyServerState(data, opts = {}) {
   updateStatusLine();
 }
 
+// fetch available agents from backend and populate dropdowns
+async function loadAgents() {
+  try {
+    const res = await fetch("/api/agents");
+    const data = await res.json();
+    const names = data.agents || [];
+    for (const sel of [agentSelect, blackAgentSelect, whiteAgentSelect]) {
+      sel.innerHTML = "";
+      for (const name of names) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      }
+    }
+    // default to alphabeta if available
+    if (names.includes("alphabeta")) {
+      agentSelect.value = "alphabeta";
+      blackAgentSelect.value = "alphabeta";
+      whiteAgentSelect.value = "alphabeta";
+    }
+  } catch (e) {
+    // fallback: add alphabeta as only option
+    for (const sel of [agentSelect, blackAgentSelect, whiteAgentSelect]) {
+      sel.innerHTML = '<option value="alphabeta">alphabeta</option>';
+    }
+  }
+}
+
+// show/hide controls based on selected mode
+function updateModeControls() {
+  currentMode = modeSelect.value;
+  const isHvA = currentMode === "human_vs_ai";
+  sideField.style.display = isHvA ? "" : "none";
+  agentField.style.display = isHvA ? "" : "none";
+  blackAgentField.style.display = isHvA ? "none" : "";
+  whiteAgentField.style.display = isHvA ? "none" : "";
+}
+
 async function apiNew() {
-  setStatus("Starting…");
+  // stop any running ai-vs-ai loop
+  aiLoopAbort = true;
+
+  setStatus("Starting...");
   gameOver = true;
   lastMove = null;
   winningCells = null;
   renderBoard();
 
-  const side = sideSelect.value;
-  const res = await fetch(`/api/new?side=${encodeURIComponent(side)}`);
+  currentMode = modeSelect.value;
+
+  let url;
+  if (currentMode === "ai_vs_ai") {
+    const ba = blackAgentSelect.value;
+    const wa = whiteAgentSelect.value;
+    url = `/api/new?mode=ai_vs_ai&black_agent=${encodeURIComponent(ba)}&white_agent=${encodeURIComponent(wa)}`;
+  } else {
+    const side = sideSelect.value;
+    const agent = agentSelect.value;
+    url = `/api/new?side=${encodeURIComponent(side)}&agent=${encodeURIComponent(agent)}`;
+  }
+
+  const res = await fetch(url);
   const data = await res.json();
   if (!res.ok) {
     setStatus(data.error || "Failed to start game.");
@@ -269,9 +359,56 @@ async function apiNew() {
   }
   boardFrameEl.classList.add("board--has-session");
   applyServerState(data, { prevGrid: emptyGrid() });
+
+  // start auto-play loop for ai-vs-ai
+  if (currentMode === "ai_vs_ai" && !gameOver) {
+    startAiLoop();
+  }
+}
+
+// ai-vs-ai: request one move at a time with delay between moves
+async function startAiLoop() {
+  aiLoopRunning = true;
+  aiLoopAbort = false;
+  stopBtn.style.display = "";
+
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  while (!gameOver && !aiLoopAbort) {
+    await delay(500);
+    if (aiLoopAbort) break;
+
+    const prevGrid = cloneGrid(grid);
+    setBoardWaiting(true);
+
+    const res = await fetch("/api/ai_move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grid: grid,
+        black_agent: blackAgentSelect.value,
+        white_agent: whiteAgentSelect.value,
+      }),
+    });
+    const data = await res.json();
+    setBoardWaiting(false);
+
+    if (!res.ok) {
+      setStatus(data.error || "AI move failed.");
+      break;
+    }
+
+    applyServerState(data, { prevGrid });
+  }
+
+  aiLoopRunning = false;
+  stopBtn.style.display = "none";
 }
 
 async function handleCellClick(row, col) {
+  // no clicks in ai-vs-ai mode
+  if (currentMode === "ai_vs_ai") return;
+
   const r = row;
   const c = col;
   if (gameOver || toMove !== humanSideStone()) return;
@@ -301,6 +438,7 @@ async function handleCellClick(row, col) {
       human_side: sideSelect.value,
       to_move: preMoveToMove,
       move: [r, c],
+      agent: agentSelect.value,
     }),
   });
   const data = await res.json();
@@ -318,6 +456,9 @@ async function handleCellClick(row, col) {
   applyServerState(data, { prevGrid: preMoveGrid, humanMove: [r, c] });
 }
 
+// event listeners
+modeSelect.addEventListener("change", updateModeControls);
+
 newBtn.addEventListener("click", () => {
   apiNew();
 });
@@ -326,6 +467,11 @@ startBoardBtn.addEventListener("click", () => {
   apiNew();
 });
 
+stopBtn.addEventListener("click", () => {
+  aiLoopAbort = true;
+});
+
+// init
 buildCoords();
 grid = emptyGrid();
 gameOver = true;
@@ -333,3 +479,4 @@ lastMove = null;
 winningCells = null;
 renderBoard();
 updateStatusLine();
+loadAgents();

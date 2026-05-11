@@ -17,13 +17,38 @@
 
     <section class="controls">
       <label class="field">
+        <span class="field__label">Mode</span>
+        <select id="modeSelect" class="select">
+          <option value="human_vs_ai">Human vs AI</option>
+          <option value="ai_vs_ai">AI vs AI (watch)</option>
+        </select>
+      </label>
+
+      <!-- human-vs-ai controls -->
+      <label class="field" id="sideField">
         <span class="field__label">You play</span>
         <select id="sideSelect" class="select">
           <option value="black">Black (first)</option>
           <option value="white">White (AI first)</option>
         </select>
       </label>
+      <label class="field" id="agentField">
+        <span class="field__label">Opponent</span>
+        <select id="agentSelect" class="select"></select>
+      </label>
+
+      <!-- ai-vs-ai controls (hidden by default) -->
+      <label class="field" id="blackAgentField" style="display:none">
+        <span class="field__label">Black agent</span>
+        <select id="blackAgentSelect" class="select"></select>
+      </label>
+      <label class="field" id="whiteAgentField" style="display:none">
+        <span class="field__label">White agent</span>
+        <select id="whiteAgentSelect" class="select"></select>
+      </label>
+
       <button type="button" id="newBtn" class="btn btn--secondary">New game</button>
+      <button type="button" id="stopBtn" class="btn btn--secondary" style="display:none">Stop</button>
     </section>
 
     <p id="status" class="status" aria-live="polite">Choose a side, then start on the board.</p>
